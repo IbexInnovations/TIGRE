@@ -85,8 +85,8 @@ struct  Geometry {
 };
 
  struct Point3D{
-    float x;
-    float y;
-    float z;
+    double x;
+    double y;
+    double z;
 };
 #endif
