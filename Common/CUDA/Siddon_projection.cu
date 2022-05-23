@@ -672,7 +672,7 @@ void computeDeltas_Siddon(Geometry geo,int i, Point3D* uvorigin, Point3D* deltaU
     //End point
     Point3D P,Pu0,Pv0;
     
-    P.x  =-(geo.DSD[i]-geo.DSO[i]);   P.y  = geo.dDetecU*(((float)geo.nDetecU/2)+0.5);       P.z  = geo.dDetecV*(((float)geo.nDetecV/2)-0.5);
+    P.x  =-(geo.DSD[i]-geo.DSO[i]);   P.y  = geo.dDetecU*(-((float)geo.nDetecU/2)+0.5);       P.z  = geo.dDetecV*(((float)geo.nDetecV/2)-0.5);
     Pu0.x=0;                          Pu0.y= geo.dDetecU;                                    Pu0.z= 0;
     Pv0.x=0;                          Pv0.y= 0;                                              Pv0.z= geo.dDetecV*(-1);
 
