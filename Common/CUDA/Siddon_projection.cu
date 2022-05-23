@@ -107,6 +107,60 @@ __global__ void vecAddInPlace(float *a, float *b, unsigned long  n)
         a[idx] = a[idx] + b[idx];
 }
 
+template<typename T>
+__device__ T clamp(T low, T high, T value)
+{
+    return (value < low) ? low : ((value > high) ? high : value);
+}
+
+// In a given dimension, determine the number of steps required between entry and exit voxel,
+// and the location of the second voxel intersection.
+// This is used to initialise the Siddon line drawing algorithm.
+template<typename T>
+int __device__ findLineStepCountAndFirstIntersection(
+    const T rayStart,
+    const T rayEnd,
+    const T rayLength,
+    const T volumeLength,
+    const T alphaMin,
+    const T alphaMax,
+    T& firstIndex,
+    T& step,
+    T& firstAlpha)
+{
+    step = rayStart < rayEnd ? +1 : -1;
+    const T roundDirection = static_cast<T>(+0.5) * static_cast<T>(step);
+    const T minIndex = rayStart < rayEnd ? static_cast<T>(1.0) : static_cast<T>(0.0);
+    const T maxIndex = volumeLength + (minIndex - static_cast<T>(1.0));
+
+    // Find the index of the first "plane" between two voxels
+    // (0 is the leftmost plane, volumeLength is the rightmost plane)
+    // that the ray will cross AFTER having entered the volume (round up if traveling left-to-right).
+    // Then the index of the last "plane" (also round up if traveling left-to-right).
+    const T firstPlane = clamp<T>(
+        minIndex,
+        maxIndex,
+        round(rayStart + alphaMin * rayLength + roundDirection));
+
+    const T lastPlane = clamp<T>(
+        minIndex,
+        maxIndex,
+        round(rayStart + alphaMax * rayLength + roundDirection));
+
+    // Compute the alpha position of the first plane we cross.
+    firstAlpha = (firstPlane - rayStart) / rayLength;
+
+    // Compute the index of the first voxel we hit
+    firstIndex = round(firstPlane - minIndex);
+
+    // If alpha is infinite (= the ray is perpendicular to this axis), make sure it is positive
+    // so it will never be chosen as the minimum.
+    if (isinf(firstAlpha)) { firstAlpha = std::abs(firstAlpha); }
+
+    // Return the number of planes the ray crosses on this axis.
+    return static_cast<int>(std::abs(lastPlane - firstPlane));
+}
+
 __global__ void kernelPixelDetector( Geometry geo,
         float* detector,
         const int currProjSetNumber,
@@ -179,68 +233,30 @@ __global__ void kernelPixelDetector( Geometry geo,
     if (am>=aM)
         detector[idx]=0;
     
-    // Compute max/min image INDEX for intersection eq(11-19)
-    // Discussion about ternary operator in CUDA: https://stackoverflow.com/questions/7104384/in-cuda-why-is-a-b010-more-efficient-than-an-if-else-version
-    float imin,imax,jmin,jmax,kmin,kmax;
-    // for X
-    if( source.x<pixel1D.x){
-        imin=(am==axm)? 1.0f             : ceilf (source.x+am*ray.x);
-        imax=(aM==axM)? geo.nVoxelX      : floorf(source.x+aM*ray.x);
-    }else{
-        imax=(am==axm)? geo.nVoxelX-1.0f : floorf(source.x+am*ray.x);
-        imin=(aM==axM)? 0.0f             : ceilf (source.x+aM*ray.x);
-    }
-    // for Y
-    if( source.y<pixel1D.y){
-        jmin=(am==aym)? 1.0f             : ceilf (source.y+am*ray.y);
-        jmax=(aM==ayM)? geo.nVoxelY      : floorf(source.y+aM*ray.y);
-    }else{
-        jmax=(am==aym)? geo.nVoxelY-1.0f : floorf(source.y+am*ray.y);
-        jmin=(aM==ayM)? 0.0f             : ceilf (source.y+aM*ray.y);
-    }
-    // for Z
-    if( source.z<pixel1D.z){
-        kmin=(am==azm)? 1.0f             : ceilf (source.z+am*ray.z);
-        kmax=(aM==azM)? geo.nVoxelZ      : floorf(source.z+aM*ray.z);
-    }else{
-        kmax=(am==azm)? geo.nVoxelZ-1.0f : floorf(source.z+am*ray.z);
-        kmin=(aM==azM)? 0.0f             : ceilf (source.z+aM*ray.z);
-    }
-    
-    // get intersection point N1. eq(20-21) [(also eq 9-10)]
-    float ax,ay,az;
-    ax=(source.x<pixel1D.x)?  __fdividef(imin-source.x,ray.x) :  __fdividef(imax-source.x,ray.x);
-    ay=(source.y<pixel1D.y)?  __fdividef(jmin-source.y,ray.y) :  __fdividef(jmax-source.y,ray.y);
-    az=(source.z<pixel1D.z)?  __fdividef(kmin-source.z,ray.z) :  __fdividef(kmax-source.z,ray.z);
-    
-    // If its Infinite (i.e. ray is parallel to axis), make sure its positive
-    ax=(isinf(ax))? abs(ax) : ax;
-    ay=(isinf(ay))? abs(ay) : ay;
-    az=(isinf(az))? abs(az) : az;    
-       
-    
-    // get index of first intersection. eq (26) and (19)
-    int i,j,k;
-    float aminc=fminf(fminf(ax,ay),az);
-    i=(int)floorf(source.x+ (aminc+am)*0.5f*ray.x);
-    j=(int)floorf(source.y+ (aminc+am)*0.5f*ray.y);
-    k=(int)floorf(source.z+ (aminc+am)*0.5f*ray.z);
+    // Compute max/min image INDEX for intersection eq(11-19) and eq(29)
+    float i, j, k;
+    float iu, ju, ku;
+    float ax, ay, az;
+
+    int inum = findLineStepCountAndFirstIntersection<float>(
+        source.x, pixel1D.x, pixel1D.x - source.x, geo.nVoxelX, am, aM, i, iu, ax);
+    int jnum = findLineStepCountAndFirstIntersection<float>(
+        source.y, pixel1D.y, pixel1D.y - source.y, geo.nVoxelY, am, aM, j, ju, ay);
+    int knum = findLineStepCountAndFirstIntersection<float>(
+        source.z, pixel1D.z, pixel1D.z - source.z, geo.nVoxelZ, am, aM, k, ku, az);
+
     // Initialize
     float ac=am;
+    float aminc=fminf(fminf(ax, ay), az);
     //eq (28), unit anlges
     float axu,ayu,azu;
     axu=__frcp_rd(fabsf(ray.x));
     ayu=__frcp_rd(fabsf(ray.y));
     azu=__frcp_rd(fabsf(ray.z));
-    // eq(29), direction of update
-    float iu,ju,ku;
-    iu=(source.x< pixel1D.x)? 1.0f : -1.0f;
-    ju=(source.y< pixel1D.y)? 1.0f : -1.0f;
-    ku=(source.z< pixel1D.z)? 1.0f : -1.0f;
     
     float maxlength=__fsqrt_rd(ray.x*ray.x*geo.dVoxelX*geo.dVoxelX+ray.y*ray.y*geo.dVoxelY*geo.dVoxelY+ray.z*ray.z*geo.dVoxelZ*geo.dVoxelZ);
     float sum=0.0f;
-    unsigned int Np=(imax-imin+1)+(jmax-jmin+1)+(kmax-kmin+1); // Number of intersections
+    unsigned int Np = inum + jnum + knum + 1; // Number of intersections
     // Go iterating over the line, intersection by intersection. If double point, no worries, 0 will be computed
     i+=0.5f;
     j+=0.5f;
