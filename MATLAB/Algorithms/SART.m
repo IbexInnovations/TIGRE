@@ -89,10 +89,7 @@ end
 %% Create weighting matrices
 
 % Projection weight, W
-
-% Projection weight, W
-W=computeW(geo,angles,gpuids);
-
+W=computeW(geo,angles,gpuids,exactW);
 
 % Back-Projection weight, V
 if ~skipV
