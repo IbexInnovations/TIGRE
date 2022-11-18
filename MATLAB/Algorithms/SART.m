@@ -90,17 +90,9 @@ end
 
 % Projection weight, W
 
-geoaux=geo;
-if ~exactW
-    geoaux.sVoxel([1 2])=geo.sDetector(1)*1.1; % a bit bigger, to avoid numerical division by zero (small number)
-    geoaux.sVoxel(3)=max(geo.sDetector(2),geo.sVoxel(3)); % make sure lines are not cropped. One is for when image is bigger than detector and viceversa
-end
-geoaux.nVoxel=[2,2,2]'; % accurate enough?
-geoaux.dVoxel=geoaux.sVoxel./geoaux.nVoxel;
-W=Ax(ones(geoaux.nVoxel','single'),geoaux,angles,'Siddon','gpuids',gpuids);
-W(W<min(geo.dVoxel)/4)=Inf;
-W=1./W;
-W(W>0.1)=0.1;
+% Projection weight, W
+W=computeW(geo,angles,gpuids);
+
 
 % Back-Projection weight, V
 if ~skipV
