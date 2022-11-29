@@ -38,19 +38,21 @@ function [res]=FDK(proj,geo,angles,varargin)
 % Codes:              https://github.com/CERN/TIGRE/
 % Coded by:           Kyungsang Kim, modified by Ander Biguri, Brandon Nelson 
 %--------------------------------------------------------------------------
-[filter,parker,gpuids]=parse_inputs(proj,geo,angles,varargin);
+[filter,parker,dowang,gpuids]=parse_inputs(proj,geo,angles,varargin);
 
 geo=checkGeo(geo,angles);
 geo.filter=filter;
 
-% Zero-padding to avoid FFT-induced aliasing %TODO: should't this be
-% for all cases, not just wang?
-[zproj, zgeo] = zeropadding(proj, geo);
-% Preweighting using Wang function
-proj=zproj.*redundancy_weighting(zgeo);
-% Replace original proj and geo
-% proj = proj_w;
-geo = zgeo;
+if dowang
+    % Zero-padding to avoid FFT-induced aliasing %TODO: should't this be
+    % for all cases, not just wang?
+    [zproj, zgeo] = zeropadding(proj, geo);
+    % Preweighting using Wang function
+    proj=zproj.*redundancy_weighting(zgeo);
+    % Replace original proj and geo
+    % proj = proj_w;
+    geo = zgeo;
+end
 
 if size(geo.offDetector,2)==1
     offset=repmat(geo.offDetector,[1 size(angles,2)]);
@@ -115,9 +117,9 @@ end
 end
 
 
-function [filter, parker, gpuids]=parse_inputs(proj,geo,angles,argin)
+function [filter, parker, wang, gpuids]=parse_inputs(proj,geo,angles,argin)
 
-opts =  {'filter','parker', 'gpuids'};
+opts = {'filter','parker','wang','gpuids'};
 defaults=ones(length(opts),1);
 
 % Check inputs
@@ -144,7 +146,7 @@ for ii=1:length(opts)
             ind=find(isequal(opt,lower(argin{jj})));
             jj=jj+1;
         end
-         if isempty(ind)
+        if isempty(ind)
             error('CBCT:FDK:InvalidInput',['Optional parameter "' argin{jj} '" does not exist' ]); 
         end
         val=argin{jj};
@@ -161,11 +163,17 @@ for ii=1:length(opts)
             else
                 parker=val;
             end
+        case 'wang'
+            if default
+                wang=true;
+            else
+                wang=val;
+            end
         case 'filter'
             if default
                 filter='ram-lak';
             else
-                if  ~ischar( val)
+                if ~ischar(val)
                     error('CBCT:FDK:InvalidInput','Invalid filter')
                 end
                 filter=val;
