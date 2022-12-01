@@ -15,6 +15,15 @@ function [res,errorL2,qualMeasOut]=SIRT(proj,geo,angles,niter,varargin)
 %   'lambda_red':  Reduction of lambda. Every iteration
 %                  lambda=lambdared*lambda. Default is 0.95
 %
+%   'skipv':       Boolean controlling whether the backprojection weights
+%                  are calculated. Default is false (weights are
+%                  calculated).
+%
+%   'exactw':      Boolean controlling whether the forwardprojection weights
+%                  are calculated using the exact volume geometry, or an
+%                  extended geometry. Default is false (weights are
+%                  calculated using extended geometry).
+%
 %   'Init':        Describes different initialization techniques.
 %                  'none'     : Initializes the image to zeros (default)
 %                  'FDK'      : Initializes image to FDK reconstruction
@@ -54,7 +63,7 @@ function [res,errorL2,qualMeasOut]=SIRT(proj,geo,angles,niter,varargin)
 
 %% Deal with input parameters
 
-[lambda,res,lambdared,verbose,QualMeasOpts,nonneg,gpuids,redundancy_weights]=parse_inputs(proj,geo,angles,varargin);
+[lambda,res,lambdared,skipV,exactW,verbose,QualMeasOpts,nonneg,gpuids,redundancy_weights]=parse_inputs(proj,geo,angles,varargin);
 measurequality=~isempty(QualMeasOpts);
 qualMeasOut=zeros(length(QualMeasOpts),niter);
 
@@ -67,15 +76,12 @@ end
 %% Create weighting matrices
 
 % Projection weight, W
-% Projection weight, W
-W=computeW(geo,angles,gpuids);
-
-% disp('Size of W matrix');
-% disp(size(W));
-clear geoaux
+W=computeW(geo,angles,gpuids,exactW);
 
 % Back-Projection weight, V
-V=computeV(geo,angles,{angles},{1:length(angles)},'gpuids',gpuids);
+if ~skipV
+    V=computeV(geo,angles,{angles},{1:length(angles)},'gpuids',gpuids);
+end
 
 if redundancy_weights
     % Data redundancy weighting, W_r implemented using Wang weighting
@@ -122,10 +128,18 @@ for ii=1:niter
     if nesterov
         % The nesterov update is quite similar to the normal update, it
         % just uses this update, plus part of the last one.
-        ynesterov=res + bsxfun(@times,1./V,Atb(W.*(proj-Ax(res,geo,angles,'gpuids',gpuids)),geo,angles,'gpuids',gpuids));
+        if skipV
+            ynesterov=res + Atb(W.*(proj-Ax(res,geo,angles,'gpuids',gpuids)),geo,angles,'unweighted','gpuids',gpuids);
+        else
+            ynesterov=res + bsxfun(@times,1./V,Atb(W.*(proj-Ax(res,geo,angles,'gpuids',gpuids)),geo,angles,'gpuids',gpuids));
+        end
         res=(1-gamma)*ynesterov+gamma*ynesterov_prev;
     else
-        res=res+lambda*bsxfun(@times,1./V,Atb(W.*(proj-Ax(res,geo,angles,'gpuids',gpuids)),geo,angles,'gpuids',gpuids)); % x= x + lambda * V * At * W^-1 * (b-Ax)
+        if skipV
+            res=res+lambda*Atb(W.*(proj-Ax(res,geo,angles,'gpuids',gpuids)),geo,angles,'unweighted','gpuids',gpuids); % x= x + lambda * V * At * W^-1 * (b-Ax)
+        else
+            res=res+lambda*bsxfun(@times,1./V,Atb(W.*(proj-Ax(res,geo,angles,'gpuids',gpuids)),geo,angles,'gpuids',gpuids)); % x= x + lambda * V * At * W^-1 * (b-Ax)
+        end
     end
     % ------------------------------------
     
@@ -209,8 +223,8 @@ end
 end
 
 
-function [lambda,res,lambdared,verbose,QualMeasOpts,nonneg,gpuids,redundancy_weights]=parse_inputs(proj,geo,alpha,argin)
-opts={'lambda','init','initimg','verbose','lambda_red','qualmeas','nonneg','gpuids','redundancy_weighting'};
+function [lambda,res,lambdared,skipv,exactw,verbose,QualMeasOpts,nonneg,gpuids,redundancy_weights]=parse_inputs(proj,geo,alpha,argin)
+opts={'lambda','init','initimg','verbose','lambda_red','skipv','exactw','qualmeas','nonneg','gpuids','redundancy_weighting'};
 defaults=ones(length(opts),1);
 % Check inputs
 nVarargs = length(argin);
@@ -275,6 +289,18 @@ for ii=1:length(opts)
                     error('TIGRE:SIRT:InvalidInput','Invalid lambda')
                 end
                 lambdared=val;
+            end
+        case 'skipv'
+            if default
+                skipv=false;
+            else
+                skipv=val;
+            end
+        case 'exactw'
+            if default
+                exactw=false;
+            else
+                exactw=val;
             end
         case 'init'
             res=[];
