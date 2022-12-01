@@ -15,6 +15,15 @@ function [res,errorL2,qualMeasOut]=SART_TV(proj,geo,angles,niter,varargin)
 %   'lambda_red':  Reduction of lambda. Every iteration
 %                  lambda=lambdared*lambda. Default is 0.99
 %
+%   'skipv':       Boolean controlling whether the backprojection weights
+%                  are calculated. Default is false (weights are
+%                  calculated).
+%
+%   'exactw':      Boolean controlling whether the forwardprojection weights
+%                  are calculated using the exact volume geometry, or an
+%                  extended geometry. Default is false (weights are
+%                  calculated using extended geometry).
+%
 %   'Init':        Describes different initialization techniques.
 %                  'none'     : Initializes the image to zeros (default)
 %                  'FDK'      : Initializes image to FDK reconstruction
@@ -65,7 +74,7 @@ function [res,errorL2,qualMeasOut]=SART_TV(proj,geo,angles,niter,varargin)
 %--------------------------------------------------------------------------
 
 %% Deal with input parameters
-[lambda,res,lamdbared,verbose,QualMeasOpts,TViter,TVlambda,OrderStrategy,nonneg,gpuids,redundancy_weights]=parse_inputs(proj,geo,angles,varargin);
+[lambda,res,lamdbared,skipV,exactW,verbose,QualMeasOpts,TViter,TVlambda,OrderStrategy,nonneg,gpuids,redundancy_weights]=parse_inputs(proj,geo,angles,varargin);
 measurequality=~isempty(QualMeasOpts);
 qualMeasOut=zeros(length(QualMeasOpts),niter);
 
@@ -85,13 +94,16 @@ index_angles=cell2mat(orig_index);
 if ~isfield(geo,'rotDetector')
     geo.rotDetector=[0;0;0];
 end
+
 %% Create weighting matrices
 
 % Projection weight, W
-W=computeW(geo,angles,gpuids);
+W=computeW(geo,angles,gpuids,exactW);
 
 % Back-Projection weight, V
-V=computeV(geo,angles,alphablocks,orig_index,'gpuids',gpuids);
+if ~skipV
+    V=computeV(geo,angles,alphablocks,orig_index,'gpuids',gpuids);
+end
 
 if redundancy_weights
     % Data redundancy weighting, W_r implemented using Wang weighting
@@ -142,7 +154,11 @@ for ii=1:niter
         %         backprj=Atb(weighted_err,geo,angles(:,jj));         %                     At * W^-1 * (b-Ax)
         %         weigth_backprj=bsxfun(@times,1./V(:,:,jj),backprj); %                 V * At * W^-1 * (b-Ax)
         %         res=res+lambda*weigth_backprj;                      % x= x + lambda * V * At * W^-1 * (b-Ax)
-        res=res+lambda* bsxfun(@times,1./V(:,:,jj),Atb(W(:,:,jj).*(proj(:,:,index_angles(:,jj))-Ax(res,geo,angles_reorder(:,jj),'gpuids',gpuids)),geo,angles_reorder(:,jj),'gpuids',gpuids));
+        if skipV
+            res=res+lambda* Atb(W(:,:,jj).*(proj(:,:,index_angles(:,jj))-Ax(res,geo,angles_reorder(:,jj),'gpuids',gpuids)),geo,angles_reorder(:,jj),'unweighted','gpuids',gpuids);
+        else
+            res=res+lambda* bsxfun(@times,1./V(:,:,jj),Atb(W(:,:,jj).*(proj(:,:,index_angles(:,jj))-Ax(res,geo,angles_reorder(:,jj),'gpuids',gpuids)),geo,angles_reorder(:,jj),'gpuids',gpuids));
+        end
         if nonneg
             res=max(res,0);
         end
@@ -223,8 +239,8 @@ end
 end
 
 
-function [lambda,res,lamdbared,verbose,QualMeasOpts,TViter,TVlambda,OrderStrategy,nonneg,gpuids,redundancy_weights]=parse_inputs(proj,geo,alpha,argin)
-opts={'lambda','init','initimg','verbose','lambda_red','qualmeas','tviter','tvlambda','orderstrategy','nonneg','gpuids','redundancy_weighting'};
+function [lambda,res,lamdbared,skipv,exactw,verbose,QualMeasOpts,TViter,TVlambda,OrderStrategy,nonneg,gpuids,redundancy_weights]=parse_inputs(proj,geo,alpha,argin)
+opts={'lambda','init','initimg','verbose','lambda_red','skipv','exactw','qualmeas','tviter','tvlambda','orderstrategy','nonneg','gpuids','redundancy_weighting'};
 defaults=ones(length(opts),1);
 % Check inputs
 nVarargs = length(argin);
@@ -289,6 +305,18 @@ for ii=1:length(opts)
                 end
                 lamdbared=val;
             end
+        case 'skipv'
+            if default
+                skipv=false;
+            else
+                skipv=val;
+            end
+        case 'exactw'
+            if default
+                exactw=false;
+            else
+                exactw=val;
+            end
         case 'init'
             res=[];
             if default || strcmp(val,'none')
@@ -351,10 +379,10 @@ for ii=1:length(opts)
                 OrderStrategy=val;
             end
             
-          case 'nonneg'
+        case 'nonneg'
             if default
                 nonneg=true;
-            else 
+            else
                 nonneg=val;
             end
         case 'gpuids'

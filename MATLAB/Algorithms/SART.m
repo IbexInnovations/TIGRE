@@ -20,7 +20,7 @@ function [res,errorL2,qualMeasOut]=SART(proj,geo,angles,niter,varargin)
 %                  calculated).
 %
 %   'exactw':      Boolean controlling whether the forwardprojection weights
-%                  are calculated using the exact volume geometry, or an 
+%                  are calculated using the exact volume geometry, or an
 %                  extended geometry. Default is false (weights are
 %                  calculated using extended geometry).
 %
@@ -82,10 +82,11 @@ errorL2=[];
 index_angles=cell2mat(orig_index);
 angles_reorder=cell2mat(alphablocks);
 
-% does detector rotation exists?
+% does detector rotation exist?
 if ~isfield(geo,'rotDetector')
     geo.rotDetector=[0;0;0];
 end
+
 %% Create weighting matrices
 
 % Projection weight, W
@@ -108,7 +109,6 @@ if redundancy_weights
     W = W.*W_r; % include redundancy weighting in W
 end
 
-clear A x y dx dz;
 %% hyperparameter stuff
 nesterov=false;
 if ischar(lambda)&&strcmp(lambda,'nesterov')
@@ -163,7 +163,11 @@ for ii=1:niter
         if nesterov
             % The nesterov update is quite similar to the normal update, it
             % just uses this update, plus part of the last one.
-            ynesterov=res+ bsxfun(@times,1./V(:,:,jj),Atb(W(:,:,index_angles(:,jj)).*(proj(:,:,index_angles(:,jj))-Ax(res,geo,angles_reorder(:,jj),'gpuids',gpuids)),geo,angles_reorder(:,jj),'gpuids',gpuids));
+            if skipV
+                ynesterov=res+ Atb(W(:,:,index_angles(:,jj)).*(proj(:,:,index_angles(:,jj))-Ax(res,geo,angles_reorder(:,jj),'gpuids',gpuids)),geo,angles_reorder(:,jj),'unweighted','gpuids',gpuids);
+            else
+                ynesterov=res+ bsxfun(@times,1./V(:,:,jj),Atb(W(:,:,index_angles(:,jj)).*(proj(:,:,index_angles(:,jj))-Ax(res,geo,angles_reorder(:,jj),'gpuids',gpuids)),geo,angles_reorder(:,jj),'gpuids',gpuids));
+            end
             res=(1-gamma)*ynesterov+gamma*ynesterov_prev;
         else
             if skipV
