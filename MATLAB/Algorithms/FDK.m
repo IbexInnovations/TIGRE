@@ -38,7 +38,7 @@ function [res]=FDK(proj,geo,angles,varargin)
 % Codes:              https://github.com/CERN/TIGRE/
 % Coded by:           Kyungsang Kim, modified by Ander Biguri, Brandon Nelson 
 %--------------------------------------------------------------------------
-[filter,parker,dowang,gpuids]=parse_inputs(proj,geo,angles,varargin);
+[filter,parker,dowang,gpuids]=parse_inputs(angles,varargin);
 
 geo=checkGeo(geo,angles);
 geo.filter=filter;
@@ -101,8 +101,6 @@ zgeo.offDetector(1,:) = geo.offDetector(1,:) - padwidth/2 * geo.dDetector(1);
 zgeo.nDetector(1) = abs(padwidth) + geo.nDetector(1);
 zgeo.sDetector(1) = zgeo.nDetector(1) * zgeo.dDetector(1);
 
-theta = (geo.sDetector(1)/2 - abs(offset))...
-        * sign(offset);
 % Pad on the left size when offset >0
 if(offset>0)
     for ii = 1:size(proj,3)
@@ -117,7 +115,7 @@ end
 end
 
 
-function [filter, parker, wang, gpuids]=parse_inputs(proj,geo,angles,argin)
+function [filter, parker, wang, gpuids]=parse_inputs(angles,argin)
 
 opts = {'filter','parker','wang','gpuids'};
 defaults=ones(length(opts),1);
