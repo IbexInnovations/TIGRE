@@ -1,4 +1,4 @@
-function [res,errorL2,qualMeasOut]=SART(proj,geo,angles,niter,varargin)
+function [res,resL2,qualMeasOut]=SART(proj,geo,angles,niter,varargin)
 % SART solves Cone Beam CT image reconstruction using Oriented Subsets
 %              Simultaneous Algebraic Reconstruction Technique algorithm
 %
@@ -49,6 +49,9 @@ function [res,errorL2,qualMeasOut]=SART(proj,geo,angles,niter,varargin)
 % 'redundancy_weighting': true or false. Default is true. Applies data
 %                         redundancy weighting to projections in the update step
 %                         (relevant for offset detector geometry)
+%  'groundTruth'  an image as grounf truth, to be used if quality measures
+%                 are requested, to plot their change w.r.t. this known
+%                 data.
 %--------------------------------------------------------------------------
 %--------------------------------------------------------------------------
 % This file is part of the TIGRE Toolbox
@@ -68,15 +71,26 @@ function [res,errorL2,qualMeasOut]=SART(proj,geo,angles,niter,varargin)
 
 %% Deal with input parameters
 blocksize=1;
-[lambda,res,lambdared,skipV,exactW,verbose,QualMeasOpts,OrderStrategy,nonneg,gpuids,redundancy_weights]=parse_inputs(proj,geo,angles,varargin);
+[lambda,res,lambdared,skipV,exactW,verbose,QualMeasOpts,OrderStrategy,nonneg,gpuids,redundancy_weights,gt]=parse_inputs(proj,geo,angles,varargin);
 
-measurequality=~isempty(QualMeasOpts);
+measurequality=~isempty(QualMeasOpts) | ~any(isnan(gt(:)));
+if ~any(isnan(gt(:)))
+    QualMeasOpts{end+1}='error_norm';
+    res_prev=gt;
+    clear gt
+end
+if nargout<3 && measurequality
+    warning("Image metrics requested but none catched as output. Call the algorithm with 3 outputs to store them")
+    measurequality=false;
+end
+qualMeasOut=zeros(length(QualMeasOpts),niter);
+
+resL2=zeros(1,niter);
 if nargout>1
     computeL2=true;
 else
     computeL2=false;
 end
-errorL2=[];
 
 [alphablocks,orig_index]=order_subsets(angles,blocksize,OrderStrategy);
 index_angles=cell2mat(orig_index);
@@ -129,8 +143,8 @@ for ii=1:niter
     if (ii==1 && verbose==1);tic;end
     % If quality is going to be measured, then we need to save previous image
     % THIS TAKES MEMORY!
-    if measurequality
-        res_prev=res;
+    if measurequality && ~strcmp(QualMeasOpts,'error_norm')
+        res_prev = res; % only store if necesary
     end
     
     % reorder angles
@@ -183,7 +197,6 @@ for ii=1:niter
     
     % If quality is being measured
     if measurequality
-        % HERE GOES
         qualMeasOut(:,ii)=Measure_Quality(res,res_prev,QualMeasOpts);
     end
     
@@ -199,15 +212,14 @@ for ii=1:niter
         geo.offDetector=offDetector;
         geo.DSD=DSD;
         geo.rotDetector=rotDetector;
-        errornow=im3Dnorm(proj-Ax(res,geo,angles,'gpuids',gpuids),'L2'); % Compute error norm2 of b-Ax
+        resL2(ii)=im3Dnorm(proj-Ax(res,geo,angles,'gpuids',gpuids),'L2'); % Compute error norm2 of b-Ax
         % If the error is not minimized.
-        if  ii~=1 && errornow>errorL2(end)
+        if  ii~=1 && resL2(ii)>resL2(ii-1)
             if verbose
                 disp(['Convergence criteria met, exiting on iteration number:', num2str(ii)]);
             end
             return
         end
-        errorL2=[errorL2 errornow];
     end
     
     if (ii==1 && verbose==1)
@@ -258,8 +270,8 @@ end
 end
 
 
-function [lambda,res,lambdared,skipv,exactw,verbose,QualMeasOpts,OrderStrategy,nonneg,gpuids,redundancy_weights]=parse_inputs(proj,geo,alpha,argin)
-opts={'lambda','init','initimg','verbose','lambda_red','skipv','exactw','qualmeas','orderstrategy','nonneg','gpuids','redundancy_weighting'};
+function [lambda,res,lambdared,skipv,exactw,verbose,QualMeasOpts,OrderStrategy,nonneg,gpuids,redundancy_weights,gt]=parse_inputs(proj,geo,alpha,argin)
+opts={'lambda','init','initimg','verbose','lambda_red','skipv','exactw','qualmeas','orderstrategy','nonneg','gpuids','redundancy_weighting','groundtruth'};
 defaults=ones(length(opts),1);
 % Check inputs
 nVarargs = length(argin);
@@ -403,6 +415,12 @@ for ii=1:length(opts)
                 redundancy_weights = true;
             else
                 redundancy_weights = val;
+            end
+        case 'groundtruth'
+            if default
+                gt=nan;
+            else
+                gt=val;
             end
         otherwise
             error('TIGRE:SART:InvalidInput',['Invalid input name:', num2str(opt),'\n No such option']);
