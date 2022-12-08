@@ -50,8 +50,9 @@ qualMeasOut=zeros(length(QualMeasOpts),niter);
 
 
 res = max(res,0);
-% Projection weight, W
-W=computeW(geo,angles,gpuids);
+% Projection weight, V
+V = Atb(ones(size(proj),'single'),geo,angles,'matched','gpuids',gpuids);
+V(V<=0.) = inf;
 
 for ii=1:niter
     if measurequality && ~strcmp(QualMeasOpts,'error_norm')
@@ -62,7 +63,7 @@ for ii=1:niter
     den = Ax(res,geo,angles,'gpuids',gpuids);
     den(den<=0.)=inf;
     
-    imgupdate = Atb(proj./den, geo,angles,'matched','gpuids',gpuids)./W;
+    imgupdate = Atb(proj./den, geo,angles,'matched','gpuids',gpuids)./V;
     res = max(res.*imgupdate,0.);
     
     if measurequality
