@@ -1,4 +1,4 @@
-function w = redundancy_weighting(geo, originalGeo)
+function w = redundancy_weighting(geo)
 % Preweighting using Wang function
 % Ref: 
 %    Wang, Ge. X-ray micro-CT with a displaced detector array. Medical Physics, 2002,29(7):1634-1636.
