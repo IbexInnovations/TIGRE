@@ -117,7 +117,7 @@ __device__ T clamp(T low, T high, T value)
 // and the location of the second voxel intersection.
 // This is used to initialise the Siddon line drawing algorithm.
 template<typename T>
-long __device__ findLineStepCountAndFirstIntersection(
+unsigned long __device__ findLineStepCountAndFirstIntersection(
     const T rayStart,
     const T rayEnd,
     const T rayLength,
