@@ -3,6 +3,8 @@ so.*
 *.jpg
 *.bmp
 *.tiff
+*.png
+*.mat
 ## Matlab ignore
 
 *.asv
@@ -64,3 +66,4 @@ MATLAB/mex_CUDA_win64.xml
 
 # Miscellaneous
 *.pdf
+*.dcm
