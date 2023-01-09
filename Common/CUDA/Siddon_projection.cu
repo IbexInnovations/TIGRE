@@ -239,11 +239,11 @@ __global__ void kernelPixelDetector( Geometry geo,
     float ax, ay, az;
 
     unsigned long inum = findLineStepCountAndFirstIntersection<float>(
-        source.x, pixel1D.x, pixel1D.x - source.x, geo.nVoxelX, am, aM, i, iu, ax);
+        source.x, pixel1D.x, ray.x, geo.nVoxelX, am, aM, i, iu, ax);
     unsigned long jnum = findLineStepCountAndFirstIntersection<float>(
-        source.y, pixel1D.y, pixel1D.y - source.y, geo.nVoxelY, am, aM, j, ju, ay);
+        source.y, pixel1D.y, ray.y, geo.nVoxelY, am, aM, j, ju, ay);
     unsigned long knum = findLineStepCountAndFirstIntersection<float>(
-        source.z, pixel1D.z, pixel1D.z - source.z, geo.nVoxelZ, am, aM, k, ku, az);
+        source.z, pixel1D.z, ray.z, geo.nVoxelZ, am, aM, k, ku, az);
 
     // Initialize
     float ac=am;
