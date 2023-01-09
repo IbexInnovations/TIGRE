@@ -107,6 +107,60 @@ __global__ void vecAddInPlace(float *a, float *b, unsigned long  n)
         a[idx] = a[idx] + b[idx];
 }
 
+template<typename T>
+__device__ T clamp(T low, T high, T value)
+{
+    return (value < low) ? low : ((value > high) ? high : value);
+}
+
+// In a given dimension, determine the number of steps required between entry and exit voxel,
+// and the location of the second voxel intersection.
+// This is used to initialise the Siddon line drawing algorithm.
+template<typename T>
+unsigned long __device__ findLineStepCountAndFirstIntersection(
+    const T rayStart,
+    const T rayEnd,
+    const T rayLength,
+    const T volumeLength,
+    const T alphaMin,
+    const T alphaMax,
+    T& firstIndex,
+    T& step,
+    T& firstAlpha)
+{
+    step = rayStart < rayEnd ? +1 : -1;
+    const T roundDirection = static_cast<T>(+0.5) * static_cast<T>(step);
+    const T minIndex = rayStart < rayEnd ? static_cast<T>(1.0) : static_cast<T>(0.0);
+    const T maxIndex = volumeLength + (minIndex - static_cast<T>(1.0));
+
+    // Find the index of the first "plane" between two voxels
+    // (0 is the leftmost plane, volumeLength is the rightmost plane)
+    // that the ray will cross AFTER having entered the volume (round up if traveling left-to-right).
+    // Then the index of the last "plane" (also round up if traveling left-to-right).
+    const T firstPlane = clamp<T>(
+        minIndex,
+        maxIndex,
+        round(rayStart + alphaMin * rayLength + roundDirection));
+
+    const T lastPlane = clamp<T>(
+        minIndex,
+        maxIndex,
+        round(rayStart + alphaMax * rayLength + roundDirection));
+
+    // Compute the alpha position of the first plane we cross.
+    firstAlpha = (firstPlane - rayStart) / rayLength;
+
+    // Compute the index of the first voxel we hit
+    firstIndex = round(firstPlane - minIndex);
+
+    // If alpha is infinite (= the ray is perpendicular to this axis), make sure it is positive
+    // so it will never be chosen as the minimum.
+    if (isinf(firstAlpha)) { firstAlpha = std::abs(firstAlpha); }
+
+    // Return the number of planes the ray crosses on this axis.
+    return static_cast<unsigned long>(std::abs(lastPlane - firstPlane));
+}
+
 __global__ void kernelPixelDetector( Geometry geo,
         float* detector,
         const int currProjSetNumber,
@@ -179,68 +233,30 @@ __global__ void kernelPixelDetector( Geometry geo,
     if (am>=aM)
         detector[idx]=0;
     
-    // Compute max/min image INDEX for intersection eq(11-19)
-    // Discussion about ternary operator in CUDA: https://stackoverflow.com/questions/7104384/in-cuda-why-is-a-b010-more-efficient-than-an-if-else-version
-    float imin,imax,jmin,jmax,kmin,kmax;
-    // for X
-    if( source.x<pixel1D.x){
-        imin=(am==axm)? 1.0f             : ceilf (source.x+am*ray.x);
-        imax=(aM==axM)? geo.nVoxelX      : floorf(source.x+aM*ray.x);
-    }else{
-        imax=(am==axm)? geo.nVoxelX-1.0f : floorf(source.x+am*ray.x);
-        imin=(aM==axM)? 0.0f             : ceilf (source.x+aM*ray.x);
-    }
-    // for Y
-    if( source.y<pixel1D.y){
-        jmin=(am==aym)? 1.0f             : ceilf (source.y+am*ray.y);
-        jmax=(aM==ayM)? geo.nVoxelY      : floorf(source.y+aM*ray.y);
-    }else{
-        jmax=(am==aym)? geo.nVoxelY-1.0f : floorf(source.y+am*ray.y);
-        jmin=(aM==ayM)? 0.0f             : ceilf (source.y+aM*ray.y);
-    }
-    // for Z
-    if( source.z<pixel1D.z){
-        kmin=(am==azm)? 1.0f             : ceilf (source.z+am*ray.z);
-        kmax=(aM==azM)? geo.nVoxelZ      : floorf(source.z+aM*ray.z);
-    }else{
-        kmax=(am==azm)? geo.nVoxelZ-1.0f : floorf(source.z+am*ray.z);
-        kmin=(aM==azM)? 0.0f             : ceilf (source.z+aM*ray.z);
-    }
-    
-    // get intersection point N1. eq(20-21) [(also eq 9-10)]
-    float ax,ay,az;
-    ax=(source.x<pixel1D.x)?  __fdividef(imin-source.x,ray.x) :  __fdividef(imax-source.x,ray.x);
-    ay=(source.y<pixel1D.y)?  __fdividef(jmin-source.y,ray.y) :  __fdividef(jmax-source.y,ray.y);
-    az=(source.z<pixel1D.z)?  __fdividef(kmin-source.z,ray.z) :  __fdividef(kmax-source.z,ray.z);
-    
-    // If its Infinite (i.e. ray is parallel to axis), make sure its positive
-    ax=(isinf(ax))? abs(ax) : ax;
-    ay=(isinf(ay))? abs(ay) : ay;
-    az=(isinf(az))? abs(az) : az;    
-       
-    
-    // get index of first intersection. eq (26) and (19)
-    unsigned long i,j,k;
-    float aminc=fminf(fminf(ax,ay),az);
-    i=(unsigned long)floorf(source.x+ (aminc+am)*0.5f*ray.x);
-    j=(unsigned long)floorf(source.y+ (aminc+am)*0.5f*ray.y);
-    k=(unsigned long)floorf(source.z+ (aminc+am)*0.5f*ray.z);
+    // Compute max/min image INDEX for intersection eq(11-19) and eq(29)
+    float i, j, k;
+    float iu, ju, ku;
+    float ax, ay, az;
+
+    unsigned long inum = findLineStepCountAndFirstIntersection<float>(
+        source.x, pixel1D.x, ray.x, geo.nVoxelX, am, aM, i, iu, ax);
+    unsigned long jnum = findLineStepCountAndFirstIntersection<float>(
+        source.y, pixel1D.y, ray.y, geo.nVoxelY, am, aM, j, ju, ay);
+    unsigned long knum = findLineStepCountAndFirstIntersection<float>(
+        source.z, pixel1D.z, ray.z, geo.nVoxelZ, am, aM, k, ku, az);
+
     // Initialize
     float ac=am;
+    float aminc=fminf(fminf(ax, ay), az);
     //eq (28), unit anlges
     float axu,ayu,azu;
     axu=__frcp_rd(fabsf(ray.x));
     ayu=__frcp_rd(fabsf(ray.y));
     azu=__frcp_rd(fabsf(ray.z));
-    // eq(29), direction of update
-    float iu,ju,ku;
-    iu=(source.x< pixel1D.x)? 1.0f : -1.0f;
-    ju=(source.y< pixel1D.y)? 1.0f : -1.0f;
-    ku=(source.z< pixel1D.z)? 1.0f : -1.0f;
     
     float maxlength=__fsqrt_rd(ray.x*ray.x*geo.dVoxelX*geo.dVoxelX+ray.y*ray.y*geo.dVoxelY*geo.dVoxelY+ray.z*ray.z*geo.dVoxelZ*geo.dVoxelZ);
     float sum=0.0f;
-    unsigned long Np=(imax-imin+1)+(jmax-jmin+1)+(kmax-kmin+1); // Number of intersections
+    unsigned long Np = inum + jnum + knum + 1; // Number of intersections
     // Go iterating over the line, intersection by intersection. If double point, no worries, 0 will be computed
     i+=0.5f;
     j+=0.5f;
@@ -672,100 +688,90 @@ void computeDeltas_Siddon(Geometry geo,int i, Point3D* uvorigin, Point3D* deltaU
     //End point
     Point3D P,Pu0,Pv0;
     
-    P.x  =-(geo.DSD[i]-geo.DSO[i]);   P.y  = geo.dDetecU*(0-((float)geo.nDetecU/2)+0.5);       P.z  = geo.dDetecV*(((float)geo.nDetecV/2)-0.5-0);
-    Pu0.x=-(geo.DSD[i]-geo.DSO[i]);   Pu0.y= geo.dDetecU*(1-((float)geo.nDetecU/2)+0.5);       Pu0.z= geo.dDetecV*(((float)geo.nDetecV/2)-0.5-0);
-    Pv0.x=-(geo.DSD[i]-geo.DSO[i]);   Pv0.y= geo.dDetecU*(0-((float)geo.nDetecU/2)+0.5);       Pv0.z= geo.dDetecV*(((float)geo.nDetecV/2)-0.5-1);
-    // Geomtric trasnformations:
+    P.x  =-(geo.DSD[i]-geo.DSO[i]);   P.y  = geo.dDetecU*(-((double)geo.nDetecU/2.0)+0.5);       P.z  = geo.dDetecV*(((double)geo.nDetecV/2.0)-0.5);
+    Pu0.x=0;                          Pu0.y= geo.dDetecU;                                    Pu0.z= 0;
+    Pv0.x=0;                          Pv0.y= 0;                                              Pv0.z= geo.dDetecV*(-1);
+
+    // Geometric transformations:
     // Now we have the Real world (OXYZ) coordinates of the bottom corner and its two neighbours.
-    // The obkjective is to get a position of the detector in a coordinate system where:
+    // The objective is to get a position of the detector in a coordinate system where:
     // 1-units are voxel size (in each direction can be different)
     // 2-The image has the its first voxel at (0,0,0)
     // 3-The image never rotates
-    
+
     // To do that, we need to compute the "deltas" the detector, or "by how much
     // (in new xyz) does the voxels change when and index is added". To do that
     // several geometric steps needs to be changed
-    
+
     //1.Roll,pitch,jaw
     // The detector can have a small rotation.
     // according to
     //"A geometric calibration method for cone beam CT systems" Yang K1, Kwan AL, Miller DF, Boone JM. Med Phys. 2006 Jun;33(6):1695-706.
     // Only the Z rotation will have a big influence in the image quality when they are small.
     // Still all rotations are supported
-    
+
     // To roll pitch jaw, the detector has to be in centered in OXYZ.
-    P.x=0;Pu0.x=0;Pv0.x=0;
-    
+    // NB: do not apply offsets to Pu0 and Pv0: they are directions, and are invariant through translations
+    P.x=0;
+
     // Roll pitch yaw
     rollPitchYaw(geo,i,&P);
     rollPitchYaw(geo,i,&Pu0);
     rollPitchYaw(geo,i,&Pv0);
-    //Now ltes translate the points where they should be:
+    //Now let's translate the points where they should be:
+    // NB: do not apply offsets to Pu0 and Pv0: they are directions, and are invariant through translations
     P.x=P.x-(geo.DSD[i]-geo.DSO[i]);
-    Pu0.x=Pu0.x-(geo.DSD[i]-geo.DSO[i]);
-    Pv0.x=Pv0.x-(geo.DSD[i]-geo.DSO[i]);
-    
+
     //1: Offset detector
-    
-    
+
+
     //S doesnt need to chagne
-    
-    
+
+
     //3: Rotate (around z)!
     Point3D Pfinal, Pfinalu0, Pfinalv0;
     Pfinal.x  =P.x;
     Pfinal.y  =P.y  +geo.offDetecU[i]; Pfinal.z  =P.z  +geo.offDetecV[i];
-    Pfinalu0.x=Pu0.x;
-    Pfinalu0.y=Pu0.y  +geo.offDetecU[i]; Pfinalu0.z  =Pu0.z  +geo.offDetecV[i];
-    Pfinalv0.x=Pv0.x;
-    Pfinalv0.y=Pv0.y  +geo.offDetecU[i]; Pfinalv0.z  =Pv0.z  +geo.offDetecV[i];
-    
+    Pfinalu0 = Pu0;
+    Pfinalv0 = Pv0;
+
     eulerZYZ(geo,&Pfinal);
     eulerZYZ(geo,&Pfinalu0);
     eulerZYZ(geo,&Pfinalv0);
     eulerZYZ(geo,&S);
-    
+
     //2: Offset image (instead of offseting image, -offset everything else)
-    
+    // NB: do not apply offsets to Pfinalu0 and Pfinalv0: they are directions, and are invariant through translations
+
     Pfinal.x  =Pfinal.x-geo.offOrigX[i];     Pfinal.y  =Pfinal.y-geo.offOrigY[i];     Pfinal.z  =Pfinal.z-geo.offOrigZ[i];
-    Pfinalu0.x=Pfinalu0.x-geo.offOrigX[i];   Pfinalu0.y=Pfinalu0.y-geo.offOrigY[i];   Pfinalu0.z=Pfinalu0.z-geo.offOrigZ[i];
-    Pfinalv0.x=Pfinalv0.x-geo.offOrigX[i];   Pfinalv0.y=Pfinalv0.y-geo.offOrigY[i];   Pfinalv0.z=Pfinalv0.z-geo.offOrigZ[i];
     S.x=S.x-geo.offOrigX[i];               S.y=S.y-geo.offOrigY[i];               S.z=S.z-geo.offOrigZ[i];
-    
+
     // As we want the (0,0,0) to be in a corner of the image, we need to translate everything (after rotation);
     Pfinal.x  =Pfinal.x+geo.sVoxelX/2;      Pfinal.y  =Pfinal.y+geo.sVoxelY/2;          Pfinal.z  =Pfinal.z  +geo.sVoxelZ/2;
-    Pfinalu0.x=Pfinalu0.x+geo.sVoxelX/2;    Pfinalu0.y=Pfinalu0.y+geo.sVoxelY/2;        Pfinalu0.z=Pfinalu0.z+geo.sVoxelZ/2;
-    Pfinalv0.x=Pfinalv0.x+geo.sVoxelX/2;    Pfinalv0.y=Pfinalv0.y+geo.sVoxelY/2;        Pfinalv0.z=Pfinalv0.z+geo.sVoxelZ/2;
     S.x      =S.x+geo.sVoxelX/2;          S.y      =S.y+geo.sVoxelY/2;              S.z      =S.z      +geo.sVoxelZ/2;
-    
+
     //4. Scale everything so dVoxel==1
     Pfinal.x  =Pfinal.x/geo.dVoxelX;      Pfinal.y  =Pfinal.y/geo.dVoxelY;        Pfinal.z  =Pfinal.z/geo.dVoxelZ;
     Pfinalu0.x=Pfinalu0.x/geo.dVoxelX;    Pfinalu0.y=Pfinalu0.y/geo.dVoxelY;      Pfinalu0.z=Pfinalu0.z/geo.dVoxelZ;
     Pfinalv0.x=Pfinalv0.x/geo.dVoxelX;    Pfinalv0.y=Pfinalv0.y/geo.dVoxelY;      Pfinalv0.z=Pfinalv0.z/geo.dVoxelZ;
     S.x      =S.x/geo.dVoxelX;          S.y      =S.y/geo.dVoxelY;            S.z      =S.z/geo.dVoxelZ;
-    
-    
+
+
     //mexPrintf("COR: %f \n",geo.COR[i]);
     //5. apply COR. Wherever everything was, now its offesetd by a bit
-    float CORx, CORy;
+    // NB: do not apply offsets to Pfinalu0 and Pfinalv0: they are directions, and are invariant through translations
+    double CORx, CORy;
     CORx=-geo.COR[i]*sin(geo.alpha)/geo.dVoxelX;
     CORy= geo.COR[i]*cos(geo.alpha)/geo.dVoxelY;
     Pfinal.x+=CORx;   Pfinal.y+=CORy;
-    Pfinalu0.x+=CORx;   Pfinalu0.y+=CORy;
-    Pfinalv0.x+=CORx;   Pfinalv0.y+=CORy;
     S.x+=CORx; S.y+=CORy;
-    
+
     // return
-    
+
     *uvorigin=Pfinal;
-    
-    deltaU->x=Pfinalu0.x-Pfinal.x;
-    deltaU->y=Pfinalu0.y-Pfinal.y;
-    deltaU->z=Pfinalu0.z-Pfinal.z;
-    
-    deltaV->x=Pfinalv0.x-Pfinal.x;
-    deltaV->y=Pfinalv0.y-Pfinal.y;
-    deltaV->z=Pfinalv0.z-Pfinal.z;
+
+    *deltaU=Pfinalu0;
+    *deltaV=Pfinalv0;
     
     *source=S;
 }

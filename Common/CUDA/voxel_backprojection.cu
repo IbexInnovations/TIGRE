@@ -785,9 +785,9 @@ void computeDeltasCube(Geometry geo,int i, Point3D* xyzorigin, Point3D* deltaX, 
     
     Point3D P, Px,Py,Pz;
     // Get coords of Img(0,0,0)
-    P.x=-(geo.sVoxelX/2-geo.dVoxelX/2)+geo.offOrigX[i];
-    P.y=-(geo.sVoxelY/2-geo.dVoxelY/2)+geo.offOrigY[i];
-    P.z=-(geo.sVoxelZ/2-geo.dVoxelZ/2)+geo.offOrigZ[i];
+    P.x=-(geo.sVoxelX/2.0-geo.dVoxelX/2.0)+geo.offOrigX[i];
+    P.y=-(geo.sVoxelY/2.0-geo.dVoxelY/2.0)+geo.offOrigY[i];
+    P.z=-(geo.sVoxelZ/2.0-geo.dVoxelZ/2.0)+geo.offOrigZ[i];
     
     // Get coors from next voxel in each direction
     Px.x=P.x+geo.dVoxelX;      Py.x=P.x;                Pz.x=P.x;
