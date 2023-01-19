@@ -20,6 +20,7 @@ function proj = filtering(proj,geo,angles,parker,d)
 % Coded by:           Kyungsang Kim, modified by Ander Biguri 
 %--------------------------------------------------------------------------
 if nargin < 5
+    % Cut-off: 0 < d <= 1
     d = 1;
 end
 
