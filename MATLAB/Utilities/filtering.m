@@ -19,6 +19,9 @@ function proj = filtering(proj,geo,angles,parker,d)
 % Codes:              https://github.com/CERN/TIGRE/
 % Coded by:           Kyungsang Kim, modified by Ander Biguri 
 %--------------------------------------------------------------------------
+if nargin < 5
+    d = 1;
+end
 
 if parker
 	proj = permute(ParkerWeight(permute(proj,[2 1 3]),geo,angles,parker),[2 1 3]);
