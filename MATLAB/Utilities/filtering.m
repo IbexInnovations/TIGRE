@@ -1,4 +1,4 @@
-function [ proj ] = filtering(proj,geo,angles,parker)
+function proj = filtering(proj,geo,angles,parker,d)
 %FILTERING Summary of this function goes here
 %   Detailed explanation goes here
 %--------------------------------------------------------------------------
@@ -19,6 +19,10 @@ function [ proj ] = filtering(proj,geo,angles,parker)
 % Codes:              https://github.com/CERN/TIGRE/
 % Coded by:           Kyungsang Kim, modified by Ander Biguri 
 %--------------------------------------------------------------------------
+if nargin < 5
+    % Cut-off: 0 < d <= 1
+    d = 1;
+end
 
 if parker
 	proj = permute(ParkerWeight(permute(proj,[2 1 3]),geo,angles,parker),[2 1 3]);
@@ -26,10 +30,9 @@ if parker
 end 
 
 filt_len = max(64,2^nextpow2(2*geo.nDetector(1)));
-[ramp_kernel] = ramp_flat(filt_len);
+ramp_kernel = ramp_flat(filt_len);
 
-d = 1; % cut off (0~1)
-[filt] = Filter(geo.filter, ramp_kernel, filt_len, d);
+filt = Filter(geo.filter, ramp_kernel, filt_len, d);
 filt = repmat(filt',[1 geo.nDetector(2)]);
 
 for ii=1:size(angles,2)
@@ -64,7 +67,7 @@ h(odd) = -1 ./ (pi * nn(odd)).^2;
 end
 
 
-function [filt] = Filter(filter, kernel, order, d)
+function filt = Filter(filter, kernel, order, d)
 
 f_kernel = abs(fft(kernel))*2;
 filt = f_kernel(1:order/2+1)';
@@ -87,8 +90,7 @@ switch lower(filter)
         error('Invalid filter selected.');
 end
 
-filt(w>pi*d) = 0;                      % Crop the frequency response
-filt = [filt , filt(end-1:-1:2)];    % Symmetry of the filter
-return
+filt(w>pi*d) = 0;                   % Crop the frequency response
+filt = [filt, filt(end-1:-1:2)];    % Symmetry of the filter
 
 end

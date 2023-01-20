@@ -1,4 +1,4 @@
-function [res]=FDK(proj,geo,angles,varargin)
+function res = FDK(proj,geo,angles,varargin)
 %FDK solves Cone Beam CT image reconstruction using Feldkam Davis Kress
 % algorithm (filtered backprojection) 
 %
@@ -20,6 +20,11 @@ function [res]=FDK(proj,geo,angles,varargin)
 %                  'cosine'
 %                  'hamming'  
 %                  'hann'
+%
+%   'filterCutOff': proportion of filter length where all points beyond
+%                   this are set to zero (higher frequencies are completely
+%                   filtered out). 1 = all frequencies included. 
+%                   Must be in range (0,1]. Default 1
 %--------------------------------------------------------------------------
 %--------------------------------------------------------------------------
 % This file is part of the TIGRE Toolbox
@@ -38,7 +43,7 @@ function [res]=FDK(proj,geo,angles,varargin)
 % Codes:              https://github.com/CERN/TIGRE/
 % Coded by:           Kyungsang Kim, modified by Ander Biguri, Brandon Nelson 
 %--------------------------------------------------------------------------
-[filter,parker,dowang,gpuids]=parse_inputs(angles,varargin);
+[filter,filterCutOff,parker,dowang,gpuids]=parse_inputs(angles,varargin);
 
 geo=checkGeo(geo,angles);
 geo.filter=filter;
@@ -73,17 +78,13 @@ for ii=1:size(angles,2)
     proj(:,:,ii) = proj(:,:,ii).*w';
 end
 %% Fourier transform based filtering
-proj = filtering(proj,geo,angles,parker); % Not sure if offsets are good in here
+proj = filtering(proj,geo,angles,parker,filterCutOff); % Not sure if offsets are good in here
 
 %RMFIELD Remove fields from a structure array.
 geo=rmfield(geo,'filter');
-%% backproject
-%%%
-% [proj, w] = preweighting(proj,geo);
-% imshow(w,[])
-%%%
-res=Atb((proj),geo,angles, 'gpuids', gpuids); % Weighting is inside
 
+%% backproject
+res=Atb(proj,geo,angles, 'gpuids', gpuids); % Weighting is inside
 
 end
 
@@ -113,9 +114,9 @@ end
 end
 
 
-function [filter, parker, wang, gpuids]=parse_inputs(angles,argin)
+function [filter, filterCutOff, parker, wang, gpuids]=parse_inputs(angles,argin)
 
-opts = {'filter','parker','wang','gpuids'};
+opts = {'filter','filtercutoff','parker','wang','gpuids'};
 defaults=ones(length(opts),1);
 
 % Check inputs
@@ -173,6 +174,15 @@ for ii=1:length(opts)
                     error('CBCT:FDK:InvalidInput','Invalid filter')
                 end
                 filter=val;
+            end
+        case 'filtercutoff'
+            if default
+                filterCutOff=1;
+            else
+                if ~isnumeric(val) || val <= 0 || val > 1
+                    error('CBCT:FDK:InvalidInput','Invalid filter cut-off')
+                end
+                filterCutOff=val;
             end
         case 'gpuids'
             if default
